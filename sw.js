@@ -1,6 +1,6 @@
 // Keeps the app's page on the phone so it opens instantly and offline.
 // Shows the saved copy at once and fetches a fresh one in the background (used next time).
-const CACHE = 'budget-shell-v1';
+const CACHE = 'budget-shell-v2';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {

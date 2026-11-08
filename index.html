@@ -580,6 +580,7 @@ body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { strok
       <div class="rep-h" id="itemsChgH">Price changes</div><div class="list" id="itemsChg"></div>
       <div class="rep-h">Latest receipts</div><div class="list" id="receiptList"></div>
     </div>
+    <button class="fixme press" id="grocAdd" style="margin-top:0"><span class="dot" style="background:var(--accent)">+</span><span class="txt">Add items without a receipt<small>Lost or forgot the receipt? Type what you bought</small></span><svg class="chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
     <div class="card" id="grocGroups" hidden><h2>By type <small>3 months</small></h2><div class="list" id="grocGroupList"></div></div>
   </section>
 
@@ -659,7 +660,7 @@ function outbox() { try { return JSON.parse(localStorage.getItem('bt-outbox') ||
 function setOutbox(q) { try { localStorage.setItem('bt-outbox', JSON.stringify(q)); } catch (e) {} paintOutbox(); }
 function queueCall(fn, args) {
   if (fn === 'apiUpdate' || fn === 'apiDelete') { const t0 = S.data && S.data.tx.find(x => x.row === args[0] && x.ts === args[1].ts); if (t0 && t0.pending) return Promise.reject('Still waiting to send this one — try again when online'); }
-  if (fn === 'apiAdd') args = [args[0], args[1] || '', args[2] || '', Date.now()];
+  if (fn === 'apiAdd') args = [args[0], args[1] || '', args[2] || '', Number(args[3]) || Date.now(), args[4] || {}];
   const q = outbox(); q.push({ fn, args, at: Date.now() }); setOutbox(q);
   return Promise.resolve(offlineResult(fn, args));
 }
@@ -670,8 +671,8 @@ function offlineResult(fn, args) {
     const num = (txt.match(/\d+(?:[.,]\d{1,2})?/) || ['0'])[0].replace(',', '.');
     const words = txt.replace(/^\+/, '').replace(num.replace('.', '[.,]'), '').replace(/[.,]\d+/, '').trim();
     return { row: 0, ts: Number(args[3]) || Date.now(), amount: Number(num) || 0, cur: 'AZN', where: args[1] || '', what: words, note: args[2] || '',
-      cat: inc ? 'Income' : 'Uncategorized', sub: '', manCat: '', manSub: '', card: 'Cash', source: 'cash', type: inc ? 'income' : 'expense',
-      oneoff: /one-?off/i.test(args[2] || ''), forWho: '', by: 'Me', orig: '', pending: true };
+      cat: inc ? 'Income' : 'Uncategorized', sub: '', manCat: '', manSub: '', card: (args[4] && args[4].card) || 'Cash', source: (args[4] && args[4].card && args[4].card !== 'Cash') ? 'manual' : 'cash', type: inc ? 'income' : 'expense',
+      oneoff: /one-?off/i.test(args[2] || ''), forWho: '', by: (args[4] && args[4].by) || 'Me', orig: '', pending: true };
   }
   if (fn === 'apiUpdate') {
     const f = args[2] || {}, t = (S.data.tx.find(x => x.row === args[0] && x.ts === args[1].ts)) || {};
@@ -2000,6 +2001,7 @@ function openEdit(row, ts) {
       ${t.where ? `<label class="fr toggle"><span>Remember for this shop<small>Name and category for every ${esc(t.where)} payment</small></span><input type="checkbox" class="switch" id="eRem" ${t.cat === 'Uncategorized' ? 'checked' : ''}></label>` : ''}
     </div>
     ${(S.data.items || []).some(x => x.row === t.row && Math.abs(x.ts - t.ts) < 2 * 864e5) ? `<div class="ghead">On the receipt · <a href="#" data-receipt="${esc((() => { const x = S.data.items.find(y => y.row === t.row && Math.abs(y.ts - t.ts) < 2 * 864e5); return x.receipt + '|' + x.ts; })())}" style="color:var(--accent);text-decoration:none;text-transform:none">open or delete</a></div><div class="form">${(S.data.items || []).filter(x => x.row === t.row && Math.abs(x.ts - t.ts) < 2 * 864e5).map(x => `<div class="fr" data-item="${esc(x.item)}" style="cursor:pointer"><span style="font-size:15px">${esc(x.item)}<small style="display:block;color:var(--text-2);font-size:12px">${x.qty} ${x.unit === 'kq' ? 'kg' : '×'} ${m(x.price)}</small></span><span style="margin-left:auto" class="num">${m(x.total)}</span></div>`).join('')}</div>` : ''}
+    ${t.cat === 'Groceries' && t.type === 'expense' && !(S.data.items || []).some(x => x.row === t.row && Math.abs(x.ts - t.ts) < 2 * 864e5) ? `<div style="padding:10px 16px 0"><a href="#" data-additems="${t.row}" style="color:var(--accent);text-decoration:none;font-weight:600">🧾 Add what you bought (no receipt)</a></div>` : ''}
     <div class="ghead">Planning</div>
     <div class="form">
       ${S.data.tx.some(x => x.by === 'Wife') ? `<div class="fr segrow"><span>Paid by</span><div class="seg2" id="eBy">${['Me', 'Wife'].map(x => `<button type="button" data-by="${x}" aria-pressed="${x === (t.by || 'Me')}">${x}</button>`).join('')}</div></div>` : ''}
@@ -2053,23 +2055,102 @@ function openEdit(row, ts) {
   };
 }
 
+// ---------- Add a payment: cash or card, any time, any payer ----------
+const pad2 = (n) => String(n).padStart(2, '0');
+const localDT = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+function myCards() {   // cards you actually pay with, most used first
+  const n = {};
+  S.data.tx.forEach(t => { if (t.card && t.card !== 'Cash' && t.type === 'expense') n[t.card] = (n[t.card] || 0) + 1; });
+  return Object.keys(n).sort((a, b) => n[b] - n[a]).slice(0, 6);
+}
+function myBy() { try { return localStorage.getItem('myBy') || 'Me'; } catch (e) { return 'Me'; } }
 function openAdd() {
-  openSheet(`<div class="navbar"><button id="aCancel">Cancel</button><div class="nt">Cash payment</div><button id="aSave">Add</button></div>
+  const cards = myCards();
+  let pay = 'Cash'; try { pay = localStorage.getItem('lastPay') || 'Cash'; } catch (e) {}
+  if (pay !== 'Cash' && cards.indexOf(pay) === -1) pay = 'Cash';
+  let by = myBy();
+  openSheet(`<div class="navbar"><button id="aCancel">Cancel</button><div class="nt">Add payment</div><button id="aSave">Add</button></div>
     <div class="ghead" style="margin-top:14px">Amount and what</div>
     <div class="form"><label class="fr wide"><input id="aText" placeholder="15 taxi" autocomplete="off" style="font-size:22px;padding:14px 0"></label></div>
-    <div class="gfoot">Start with + for cash you received, e.g. "+50 gift"</div>
-    <div class="ghead">Optional</div>
+    <div class="gfoot">Start with + for money you received, e.g. "+50 gift"</div>
+    <div class="ghead">Paid with</div>
+    <div class="chips2" id="aPay">${['Cash'].concat(cards).map(c => `<button type="button" class="chip2 ${c === pay ? 'on' : ''}" data-pay="${esc(c)}">${c === 'Cash' ? '💵 Cash' : '💳 ' + esc(c)}</button>`).join('')}<button type="button" class="chip2" data-pay="__other">💳 Other card…</button></div>
+    <div class="form" id="aOtherWrap" hidden style="margin-top:8px"><label class="fr"><span>Card</span><input id="aOther" autocomplete="off" placeholder="e.g. Birbank *4821"></label></div>
+    <div class="ghead">Details</div>
     <div class="form">
+      <label class="fr"><span>When</span><input id="aWhen" type="datetime-local" value="${localDT(Date.now())}" max="${localDT(Date.now() + 6e4)}" style="text-align:right"></label>
       <label class="fr"><span>Where</span><input id="aWhere" autocomplete="off" placeholder="shop"></label>
       <label class="fr"><span>Note</span><input id="aNote" autocomplete="off" placeholder="add &quot;one-off&quot; to tag it"></label>
-    </div>`);
+      <div class="fr segrow"><span>Paid by</span><div class="seg2" id="aBy">${['Me', 'Wife'].map(x => `<button type="button" data-by="${x}" aria-pressed="${x === by}">${x === 'Wife' ? 'Parvin' : x}</button>`).join('')}</div></div>
+    </div>
+    <div style="padding:16px 16px 24px;text-align:center"><a href="#" id="aItems" style="color:var(--accent);text-decoration:none;font-weight:600">🧾 Add grocery items without a receipt</a></div>`);
   setTimeout(() => $('aText').focus(), 350);
   $('aCancel').onclick = closeSheet;
+  $('aItems').onclick = (e) => { e.preventDefault(); openAddItems(); };
+  $('aPay').onclick = (e) => { const b = e.target.closest('[data-pay]'); if (!b) return;
+    $('aPay').querySelectorAll('.chip2').forEach(x => x.classList.toggle('on', x === b));
+    $('aOtherWrap').hidden = b.dataset.pay !== '__other'; pay = b.dataset.pay; if (pay === '__other') setTimeout(() => $('aOther').focus(), 50); };
+  $('aBy').onclick = (e) => { const b = e.target.closest('[data-by]'); if (!b) return; by = b.dataset.by; $('aBy').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); };
   $('aSave').onclick = async () => {
     if (!$('aText').value.trim()) return;
+    const card = pay === '__other' ? ($('aOther').value.trim() || 'Card') : pay;
+    const when = $('aWhen').value ? new Date($('aWhen').value).getTime() : Date.now();
+    const ts = Math.abs(when - Date.now()) < 120000 ? 0 : when;
+    try { localStorage.setItem('myBy', by); localStorage.setItem('lastPay', pay === '__other' ? 'Cash' : pay); } catch (e) {}
     $('aSave').disabled = true;
-    try { const t = await call('apiAdd', $('aText').value, $('aWhere').value, $('aNote').value); S.data.tx.push(t); closeSheet(); render(); toast(t.pending ? 'Saved on the phone · sends when online' : 'Added ' + m(t.amount) + ' · ' + t.cat); }
+    try { const t = await call('apiAdd', $('aText').value, $('aWhere').value, $('aNote').value, ts, { card, by }); S.data.tx.push(t); closeSheet(); render(); toast(t.pending ? 'Saved on the phone · sends when online' : 'Added ' + m(t.amount) + ' · ' + t.cat); }
     catch (e) { toast(e); $('aSave').disabled = false; }
+  };
+}
+
+// ---------- Grocery items without a receipt ----------
+function openAddItems(payRow) {
+  const items = S.data.items || [];
+  const last = {};   // last price + unit per item, to prefill
+  items.slice().sort((a, b) => a.ts - b.ts).forEach(x => last[x.item.toLowerCase()] = x);
+  const names = Object.values(last).map(x => x.item).sort();
+  const shops = [...new Set(items.map(x => x.shop).filter(Boolean))].sort();
+  const recent = S.data.tx.filter(t => t.cat === 'Groceries' && t.type === 'expense' && t.ts > Date.now() - 14 * 864e5).sort((a, b) => b.ts - a.ts).slice(0, 12);
+  const pre = payRow ? S.data.tx.find(t => t.row === payRow) : null;
+  const row = (i) => `<div class="irow" data-i="${i}" style="display:grid;grid-template-columns:1fr 64px 84px;gap:8px;padding:8px 16px;border-top:.5px solid var(--sep)">
+      <input class="iName" list="itNames" placeholder="Item, e.g. Kəsmik" autocomplete="off" style="font:inherit;font-size:16px;border:0;background:none;color:var(--text);min-width:0">
+      <input class="iQty" inputmode="decimal" placeholder="Qty" value="1" style="font:inherit;font-size:16px;border:0;background:var(--fill);border-radius:8px;padding:6px;text-align:center;color:var(--text)">
+      <input class="iPrice" inputmode="decimal" placeholder="₼ each" style="font:inherit;font-size:16px;border:0;background:var(--fill);border-radius:8px;padding:6px;text-align:right;color:var(--text)"></div>`;
+  openSheet(`<div class="navbar"><button id="iCancel">Cancel</button><div class="nt">Groceries, no receipt</div><button id="iSave">Save</button></div>
+    <datalist id="itNames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <datalist id="itShops">${shops.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    ${recent.length ? `<div class="ghead" style="margin-top:14px">Which payment was it? <small style="text-transform:none">(optional)</small></div>
+      <div class="form"><label class="fr"><span>Payment</span><select id="iPay" style="text-align:right;max-width:62%"><option value="">— none —</option>${recent.map(t => `<option value="${t.row}" ${pre && pre.row === t.row ? 'selected' : ''}>${new Date(t.ts).getDate()} ${MONTHS[new Date(t.ts).getMonth()]} · ${esc(label(t))} · ${m(t.amount, false)}</option>`).join('')}</select></label></div>` : ''}
+    <div class="ghead">Shop and day</div>
+    <div class="form"><label class="fr"><span>Shop</span><input id="iShop" list="itShops" autocomplete="off" placeholder="Bazarstore" value="${esc(pre ? label(pre) : '')}"></label>
+      <label class="fr"><span>When</span><input id="iWhen" type="datetime-local" value="${localDT(pre ? pre.ts : Date.now())}" style="text-align:right"></label></div>
+    <div class="ghead">Items <small style="text-transform:none">· qty in pieces or kg</small></div>
+    <div class="form" id="iRows" style="padding:0">${[0, 1, 2].map(row).join('')}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px"><a href="#" id="iMore" style="color:var(--accent);text-decoration:none;font-weight:600">+ Another item</a><b class="num" id="iTotal">₼0.00</b></div>
+    <div class="gfoot" id="iHint">Known items fill in their last price. Types (Dairy, Sweets…) are set automatically.</div><div style="height:20px"></div>`);
+  let n = 3;
+  const sum = () => { let t = 0; document.querySelectorAll('#iRows .irow').forEach(r => { const q = parseFloat(r.querySelector('.iQty').value.replace(',', '.')) || 0, p = parseFloat(r.querySelector('.iPrice').value.replace(',', '.')) || 0; t += q * p; });
+    $('iTotal').textContent = m(t);
+    const pr = $('iPay') && $('iPay').value ? S.data.tx.find(x => x.row === Number($('iPay').value)) : null;
+    $('iHint').textContent = pr ? (Math.abs(pr.amount - t) < 0.02 ? '✓ Matches the payment of ' + m(pr.amount) : 'Payment was ' + m(pr.amount) + ' · ' + (pr.amount > t ? m(pr.amount - t) + ' not listed yet' : m(t - pr.amount) + ' more than paid')) : 'Known items fill in their last price. Types (Dairy, Sweets…) are set automatically.'; };
+  $('iRows').addEventListener('input', (e) => {
+    if (e.target.classList.contains('iName')) { const k = last[e.target.value.trim().toLowerCase()], r = e.target.closest('.irow');
+      if (k && !r.querySelector('.iPrice').value) { r.querySelector('.iPrice').value = k.price.toFixed(2); if (k.unit === 'kq') r.querySelector('.iQty').value = ''; r.dataset.unit = k.unit; } }
+    sum(); });
+  $('iMore').onclick = (e) => { e.preventDefault(); $('iRows').insertAdjacentHTML('beforeend', row(n++)); $('iRows').lastElementChild.querySelector('.iName').focus(); };
+  if ($('iPay')) $('iPay').onchange = () => { const t = S.data.tx.find(x => x.row === Number($('iPay').value)); if (t) { $('iShop').value = label(t); $('iWhen').value = localDT(t.ts); } sum(); };
+  $('iCancel').onclick = closeSheet;
+  $('iSave').onclick = async () => {
+    const list = [...document.querySelectorAll('#iRows .irow')].map(r => {
+      const name = r.querySelector('.iName').value.trim(), qty = r.querySelector('.iQty').value.trim() || '1', price = r.querySelector('.iPrice').value.trim();
+      const unit = r.dataset.unit === 'kq' || /[.,]\d*[1-9]/.test(qty) && parseFloat(qty.replace(',', '.')) % 1 ? 'kq' : 'ədəd';
+      return name && price ? { name, qty, price, unit } : null; }).filter(Boolean);
+    if (!list.length) { toast('Type at least one item and its price'); return; }
+    $('iSave').disabled = true;
+    try {
+      S.data.items = await call('apiAddItems', { shop: $('iShop').value, ts: new Date($('iWhen').value).getTime() || Date.now(), row: $('iPay') ? Number($('iPay').value) || 0 : 0, items: list });
+      closeSheet(); render(); toast('Saved ' + list.length + ' item' + (list.length > 1 ? 's' : ''));
+    } catch (e) { toast(e); $('iSave').disabled = false; }
   };
 }
 
@@ -2083,6 +2164,8 @@ document.addEventListener('click', async (e) => {
   if (openRow) { closeSwipes(); return; }
   const rcp = e.target.closest('[data-receipt]');
   if (rcp) { openReceipt(rcp.dataset.receipt); return; }
+  const ai = e.target.closest('[data-additems], #grocAdd');
+  if (ai) { e.preventDefault(); openAddItems(Number(ai.dataset.additems) || 0); return; }
   const ity = e.target.closest('[data-itype]');
   if (ity) { openType(ity.dataset.itype); return; }
   const itm = e.target.closest('[data-item]');
