@@ -1981,7 +1981,10 @@ function openStack() {
 function openEdit(row, ts) {
   const t = S.data.tx.find(x => x.row === row && x.ts === ts); if (!t) return;
   const d = new Date(t.ts);
-  const opts = ['<option value="">Automatic</option>'].concat(allCats().map(c => `<option ${c === t.manCat ? 'selected' : ''}>${esc(c)}</option>`)).join('');
+  // show the category and subcategory it actually has (set by rules or by you), so it can be checked and changed
+  const cat0 = t.manCat || t.cat, sub0 = t.manSub || t.sub || 'General', byYou = !!t.manCat;
+  const cats = allCats(); if (cats.indexOf(cat0) === -1) cats.unshift(cat0);
+  const opts = cats.map(c => `<option ${c === cat0 ? 'selected' : ''}>${esc(c)}</option>`).join('');
   openSheet(`<div class="navbar"><button id="eCancel">Cancel</button><div class="nt">Payment</div><button id="eSave">Save</button></div>
     <div class="amounthead">${icon(t, true)}
       <div class="a num rnd">${t.type === 'income' ? '+' : ''}${m(t.amount)}</div>
@@ -1992,11 +1995,11 @@ function openEdit(row, ts) {
       <label class="fr"><span>Where</span><input id="eWhere" value="${esc(t.where)}" placeholder="shop"></label>
       <label class="fr"><span>Note</span><input id="eNote" value="${esc(t.note)}" placeholder="optional"></label>
     </div>
-    <div class="ghead">Category</div>
+    <div class="ghead">Category <small style="text-transform:none;letter-spacing:0" id="eWho">· ${byYou ? 'set by you' : 'set automatically'}</small></div>
     <div class="form">
-      <div class="qchips" id="eQuick">${topCats(6).map(c => `<button type="button" class="chip2 ${c === (t.manCat || '') ? 'on' : ''}" data-qc="${esc(c)}">${LOOK[c] ? LOOK[c][0] : '🏷️'} ${esc(c)}</button>`).join('')}</div>
-      <label class="fr"><span>Category</span><select id="eCat">${opts}</select></label>
-      <label class="fr"><span>Subcategory</span><select id="eSubSel"></select></label>
+      <div class="qchips" id="eQuick">${topCats(6).map(c => `<button type="button" class="chip2 ${c === cat0 ? 'on' : ''}" data-qc="${esc(c)}">${LOOK[c] ? LOOK[c][0] : '🏷️'} ${esc(c)}</button>`).join('')}</div>
+      <label class="fr"><span>Category</span><select id="eCat" style="color:var(--text);font-weight:600">${opts}</select></label>
+      <label class="fr"><span>Subcategory</span><select id="eSubSel" style="color:var(--text);font-weight:600"></select></label>
       <label class="fr" id="eSubRow" style="display:none"><span>New subcategory</span><input id="eSub" value="${esc(t.manSub)}" placeholder="e.g. Bakery"></label>
       ${t.where ? `<label class="fr toggle"><span>Remember for this shop<small>Name and category for every ${esc(t.where)} payment</small></span><input type="checkbox" class="switch" id="eRem" ${t.cat === 'Uncategorized' ? 'checked' : ''}></label>` : ''}
     </div>
@@ -2014,30 +2017,33 @@ function openEdit(row, ts) {
       <label class="fr"><span>Amount ₼</span><input id="eAmt" type="number" inputmode="decimal" step="0.01" value="${t.amount}"></label>
       <label class="fr"><span>Type</span><select id="eType">${['expense', 'income', 'transfer'].map(x => `<option value="${x}" ${x === t.type ? 'selected' : ''}>${x[0].toUpperCase() + x.slice(1)}</option>`).join('')}</select></label>
     </div>
-    <div class="gfoot">Currently ${esc(t.cat)}${t.sub ? ' › ' + esc(t.sub) : ''}</div>
+    <div class="gfoot">${byYou ? `You chose ${esc(cat0)} › ${esc(sub0)}. <a href="#" id="eReset" style="color:var(--accent);text-decoration:none">Back to automatic</a>` : `Chosen by the rules: ${esc(cat0)} › ${esc(sub0)}. Change it above if it's wrong.`}</div>
     <div class="form" style="margin-top:22px"><div class="fr danger" id="eDel">Delete payment</div></div>`);
   $('eCancel').onclick = closeSheet;
+  let reset = false;
   const fillSubs = () => {
-    const cat = $('eCat').value || t.cat;
+    const cat = $('eCat').value, want = cat === cat0 ? sub0 : 'General';
     const list = ((S.data.subs || {})[cat] || []).slice();
-    if (t.manSub && list.indexOf(t.manSub) === -1) list.push(t.manSub);
-    const autoLabel = $('eCat').value ? 'General' : 'Automatic · ' + (t.sub || 'General');
-    $('eSubSel').innerHTML = `<option value="">${esc(autoLabel)}</option>` + list.filter(x => x !== 'General' || !$('eCat').value).map(x => `<option ${x === t.manSub ? 'selected' : ''}>${esc(x)}</option>`).join('') + '<option value="__new">New…</option>';
+    if (list.indexOf('General') === -1) list.unshift('General');
+    if (list.indexOf(want) === -1) list.push(want);
+    $('eSubSel').innerHTML = list.map(x => `<option ${x === want ? 'selected' : ''}>${esc(x)}</option>`).join('') + '<option value="__new">New…</option>';
     $('eSubRow').style.display = 'none';
   };
   fillSubs();
-  $('eCat').onchange = () => { t.manSub = ''; fillSubs(); $('eQuick').querySelectorAll('.chip2').forEach(x => x.classList.toggle('on', x.dataset.qc === $('eCat').value)); };
-  $('eSubSel').onchange = () => { const nw = $('eSubSel').value === '__new'; $('eSubRow').style.display = nw ? '' : 'none'; if (nw) { $('eSub').value = ''; $('eSub').focus(); } else $('eSub').value = $('eSubSel').value; };
-  $('eSub').value = t.manSub || '';
+  if ($('eReset')) $('eReset').onclick = (ev) => { ev.preventDefault(); reset = true; $('eWho').textContent = '· back to automatic when you save'; $('eReset').textContent = '✓ will reset'; };
+  $('eCat').onchange = () => { reset = false; fillSubs(); $('eQuick').querySelectorAll('.chip2').forEach(x => x.classList.toggle('on', x.dataset.qc === $('eCat').value)); };
+  $('eSubSel').onchange = () => { reset = false; const nw = $('eSubSel').value === '__new'; $('eSubRow').style.display = nw ? '' : 'none'; if (nw) { $('eSub').value = ''; $('eSub').focus(); } };
   $('eQuick').onclick = (ev) => { const b = ev.target.closest('[data-qc]'); if (!b) return; $('eCat').value = b.dataset.qc; $('eCat').onchange(); };
   S._for = t.forWho; S._by = t.by || 'Me';
   if ($('eBy')) $('eBy').onclick = (ev) => { const b = ev.target.closest('[data-by]'); if (!b) return; S._by = b.dataset.by; $('eBy').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); };
   $('eFor').onclick = (ev) => { const b = ev.target.closest('[data-for]'); if (!b) return; S._for = b.dataset.for; $('eFor').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); };
   $('eSave').onclick = async () => {
     $('eSave').disabled = true;
+    const catV = $('eCat').value, subV = $('eSubSel').value === '__new' ? ($('eSub').value.trim() || 'General') : $('eSubSel').value;
+    const changed = catV !== cat0 || subV !== sub0;
     try {
       const upd = await call('apiUpdate', t.row, fp(t), { what: $('eWhat').value, where: $('eWhere').value, note: $('eNote').value,
-        manCat: $('eCat').value, manSub: $('eSub').value, amount: $('eAmt').value, type: $('eType').value, oneoff: $('eOne').checked !== !!t.oneoff ? $('eOne').checked : undefined,
+        manCat: reset ? '' : changed ? catV : (t.manCat || ''), manSub: reset ? '' : changed ? subV : (t.manSub || ''), amount: $('eAmt').value, type: $('eType').value, oneoff: $('eOne').checked !== !!t.oneoff ? $('eOne').checked : undefined,
         forWho: S._for && S._for !== t.forWho ? S._for : undefined,
         by: S._by && S._by !== (t.by || 'Me') ? S._by : undefined,
         remember: !!($('eRem') && $('eRem').checked) });
