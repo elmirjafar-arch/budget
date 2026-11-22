@@ -399,6 +399,18 @@ body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { strok
 .budsum small { display: block; font-size: 11px; color: var(--text-2); } .budsum b { font-size: 16px; }
 .dayhead { display: flex; justify-content: space-between; padding: 10px 20px 6px; font-size: 13px; color: var(--text-2); }
 .seg2.small button { font-size: 12px; padding: 4px 10px; }
+/* Donut: categories → subcategories → payments */
+.dnwrap { position: relative; width: 240px; max-width: 78vw; margin: 4px auto 10px; aspect-ratio: 1; }
+.dnwrap svg { width: 100%; height: 100%; display: block; }
+.dnwrap path { cursor: pointer; transition: opacity .2s, transform .2s; transform-origin: 120px 120px; }
+.dnwrap path:hover, .dnwrap path.on { transform: scale(1.035); }
+.dnc { position: absolute; inset: 26%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.dnc small { font-size: 12px; color: var(--text-2); line-height: 1.25; } .dnc b { font-size: 22px; letter-spacing: -.3px; margin: 2px 0; }
+.dnrow { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: .5px solid var(--sep); cursor: pointer; }
+.dnrow:first-child { border-top: 0; } .dnrow i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.dnrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dnrow .pc { color: var(--text-2); font-size: 13px; width: 38px; text-align: right; } .dnrow .am { min-width: 74px; text-align: right; }
+.dnback { display: inline-block; margin: 0 0 6px; color: var(--accent); text-decoration: none; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -472,6 +484,11 @@ body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { strok
 
     <div class="card" id="calCard" hidden><h2>Day by day <small id="calSub"></small></h2><div class="cal" id="calGrid"></div>
       <div class="calleg">less <i style="background:var(--fill)"></i><i style="background:color-mix(in srgb,#ff9500 30%,var(--fill))"></i><i style="background:color-mix(in srgb,#ff9500 60%,var(--fill))"></i><i style="background:#ff9500"></i> more</div></div>
+    <div class="card" id="dnCard">
+      <h2 id="dnTitle">Where it went <small>tap a slice</small></h2>
+      <div class="dnwrap"><svg id="dnSvg" viewBox="0 0 240 240" role="img" aria-label="Spending by category"></svg><div class="dnc" id="dnCenter"></div></div>
+      <div id="dnLegend"></div>
+    </div>
     <div class="card split">
       <h2>Money out <small>this period</small></h2>
       <div class="splitbar" id="splitBar"></div>
@@ -745,7 +762,7 @@ function selLabel() {
   return S.cats.concat(subs.map(x => x[1])).slice(0, 2).join(', ') + (n > 2 ? ' +' + (n - 2) : '');
 }
 function resetFilters() {
-  S.cats = []; S.subs = []; S.src = ''; S.by = ''; S.q = '';
+  S.cats = []; S.subs = []; S.src = ''; S.by = ''; S.q = ''; S.dn = '';
   $('fSrc').value = ''; $('fBy').value = ''; $('fQ').value = '';
   setRange('month'); S.month = startOfMonth(new Date());
 }
@@ -1627,6 +1644,54 @@ function openBudgets() {
 }
 
 // ---------- rings: month budget · today's safe amount · the category closest to its limit ----------
+// ---------- Donut: tap a category to split it into subcategories, tap a subcategory for its payments ----------
+const DN_COLORS = ['#4f6bed', '#f2994a', '#27ae60', '#eb5757', '#9b51e0', '#2d9cdb', '#f2c94c', '#e0559b', '#8a8f98'];
+function dnArc(a0, a1, r0, r1) {
+  const P = (a, r) => [120 + r * Math.sin(a), 120 - r * Math.cos(a)];
+  if (a1 - a0 >= 2 * Math.PI - 1e-6) a1 = a0 + 2 * Math.PI - 1e-4;
+  const big = a1 - a0 > Math.PI ? 1 : 0, [x0, y0] = P(a0, r1), [x1, y1] = P(a1, r1), [x2, y2] = P(a1, r0), [x3, y3] = P(a0, r0);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r1} ${r1} 0 ${big} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}L${x2.toFixed(2)} ${y2.toFixed(2)}A${r0} ${r0} 0 ${big} 0 ${x3.toFixed(2)} ${y3.toFixed(2)}Z`;
+}
+function renderDonut(spend) {
+  const lvl = S.dn || '';
+  const by = {}, add = (k, v) => { by[k] = (by[k] || 0) + v; };
+  let rows;
+  if (!lvl || lvl === '__other') {
+    spend.forEach(t => add(t.cat, t.amount));
+    let all = Object.entries(by).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+    if (lvl === '__other') all = all.slice(7);
+    else if (all.length > 8) { const rest = all.slice(7).reduce((s2, x) => s2 + x[1], 0); all = all.slice(0, 7).concat([['__other', rest]]); }
+    rows = all.map(([k, v]) => ({ key: k, label: k === '__other' ? 'Other categories' : k, v, go: k === '__other' ? '__other' : k }));
+  } else {
+    spend.filter(t => t.cat === lvl).forEach(t => add(t.sub || 'General', t.amount));
+    rows = Object.entries(by).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ key: k, label: k, v, sub: lvl + SEP + k }));
+  }
+  const tot = rows.reduce((s2, r) => s2 + r.v, 0);
+  $('dnCard').hidden = !tot && !lvl;
+  if ($('dnCard').hidden) return;
+  // the category's own colour family when drilled in, a fixed palette at the top level
+  const base = lvl && lvl !== '__other' ? (LOOK[lvl] || [, '#4f6bed'])[1] : null;
+  const col = (i) => base ? `color-mix(in srgb, ${base} ${Math.max(28, 100 - i * 14)}%, var(--surface))` : DN_COLORS[i % DN_COLORS.length];
+  let a = 0;
+  $('dnSvg').innerHTML = (tot ? rows.map((r, i) => { const da = r.v / tot * 2 * Math.PI, gap = rows.length > 1 ? 0.012 : 0;
+    const d = dnArc(a + gap, a + da - gap, 74, 112); a += da; return `<path d="${d}" fill="${col(i)}" data-dn="${i}"><title>${esc(r.label)}: ${m(r.v, false)}</title></path>`; }).join('')
+    : `<circle cx="120" cy="120" r="93" fill="none" stroke="var(--fill)" stroke-width="38"/>`);
+  const bud = lvl && lvl !== '__other' ? budgetFor(lvl) : (!lvl ? budgetFor('') : 0);
+  const over = bud && tot > bud;
+  $('dnCenter').innerHTML = `<small>${lvl ? esc(lvl === '__other' ? 'Other categories' : lvl) : 'Spent'}</small><b class="num">${m(tot, false)}</b>${bud ? `<small style="color:${over ? 'var(--crit)' : 'var(--good)'}">${m(Math.abs(bud - tot), false)} ${over ? 'over' : 'left'}</small>` : `<small>${periodText(true)}</small>`}`;
+  $('dnTitle').innerHTML = lvl ? `${esc(lvl === '__other' ? 'Other categories' : lvl)} <small>${lvl === '__other' ? 'tap a category' : 'tap a subcategory for its payments'}</small>` : 'Where it went <small>tap a slice</small>';
+  $('dnLegend').innerHTML = (lvl ? `<a href="#" class="dnback" data-dn-back>‹ All categories</a>` : '') +
+    rows.map((r, i) => `<div class="dnrow" data-dn="${i}"><i style="background:${col(i)}"></i><span class="nm">${esc(r.label)}</span><span class="pc num">${Math.round(r.v / tot * 100)}%</span><span class="am num">${m(r.v, false)}</span><svg class="chev" viewBox="0 0 24 24" width="14" height="14"><path d="M9 5l7 7-7 7"/></svg></div>`).join('') +
+    (lvl && lvl !== '__other' ? `<div style="padding:10px 2px 0"><a href="#" data-drill-cat="${esc(lvl)}" style="color:var(--accent);text-decoration:none;font-weight:600">All ${esc(lvl)} details and payments ›</a></div>` : '');
+  S._dnRows = rows;
+}
+function dnTap(i) {
+  const r = (S._dnRows || [])[i]; if (!r) return;
+  if (r.sub) { subPage(r.sub); return; }
+  S._dnFromOther = S.dn === '__other'; S.dn = r.go; render();
+  const c = $('dnCard'); if (c.getBoundingClientRect().top < 0) c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderRings(spend, budget) {
   const nowD = new Date(), cur = S.range === 'month' && S.month.getTime() === startOfMonth(nowD).getTime();
   $('ringCard').hidden = !cur || !budget || selOn() || !!S.q;
@@ -1741,6 +1806,7 @@ function renderOverview(rows, spend) {
     <div class="ic" style="background:var(--fill)">${FACE2[k]}</div><div class="mid"><div class="t1"><span>${k === 'Family' ? 'Family / shared' : k}</span></div>
     <div class="mbar"><i style="width:${v / whoTot * 100}%"></i></div></div><div class="end num">${m(v, false)}<small class="dim">${Math.round(v / whoTot * 100)}%</small></div></div>`).join('');
   renderRings(spend, budget);
+  renderDonut(spend);
   renderCal(spend);
   const unc = S.data.tx.filter(t => t.cat === 'Uncategorized' && isSpend(t));
   const fx = $('fixme');
@@ -2234,6 +2300,9 @@ document.addEventListener('click', async (e) => {
   if (eg) { openGoal((S.data.goals || []).find(g => g.name === eg.dataset.editGoal)); return; }
   const ea = e.target.closest('[data-edit-acc]');
   if (ea) { openAccount((S.data.accounts || []).find(x => x.name === ea.dataset.editAcc)); return; }
+  const dn = e.target.closest('[data-dn]');
+  if (dn && e.target.closest('#dnCard')) { e.preventDefault(); dnTap(Number(dn.dataset.dn)); return; }
+  if (e.target.closest('[data-dn-back]')) { e.preventDefault(); S.dn = S.dn && S.dn !== '__other' && S._dnFromOther ? '__other' : ''; S._dnFromOther = false; render(); return; }
   const sp = e.target.closest('[data-subpage]');
   if (sp) { e.preventDefault(); subPage(sp.dataset.subpage); return; }
   if (e.target.closest('#heroCard') && S.data) { S.hero = S.hero === 'spent' ? 'left' : 'spent'; try { localStorage.setItem('hero', S.hero); } catch (x) {} render(); return; }
