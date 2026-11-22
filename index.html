@@ -393,6 +393,12 @@ body.setup-mode .topbar, body.setup-mode header, body.setup-mode nav { display: 
 body.priv .num, body.priv .chart text, body.priv .tip, body.priv .cal small, body.priv .rleg b { filter: blur(7px); transition: filter .2s; }
 body.priv .num.peek { filter: none; }
 body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { stroke: #fff; }
+/* budget summary + day headers */
+.budsum { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px; margin: 2px 0 12px; }
+.budsum div { background: var(--fill); border-radius: 12px; padding: 8px 10px; }
+.budsum small { display: block; font-size: 11px; color: var(--text-2); } .budsum b { font-size: 16px; }
+.dayhead { display: flex; justify-content: space-between; padding: 10px 20px 6px; font-size: 13px; color: var(--text-2); }
+.seg2.small button { font-size: 12px; padding: 4px 10px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -442,7 +448,7 @@ body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { strok
 
   <section class="view" id="v-overview" hidden>
     <div class="card install press" id="installCard" hidden><div style="font-size:28px">📲</div><div><b>Home-screen app</b><div class="small" style="color:var(--text-2)">Opens instantly, full screen, works offline</div></div><button class="x" id="installX" aria-label="Hide">×</button></div>
-    <div class="card hero">
+    <div class="card hero press" id="heroCard" title="Tap to switch between left and spent">
       <div class="k" id="heroLabel">Spent</div>
       <div class="big num rnd" id="heroSpent">₼0</div>
       <div class="sub num" id="heroSub"></div>
@@ -516,7 +522,8 @@ body.priv #privBtn { background: var(--accent); } body.priv #privBtn svg { strok
       <div class="chart" id="paceChart"></div>
     </div>
     <div class="card">
-      <h2>Categories <small>tap for details</small></h2>
+      <h2>Budget by category <small>tap a row · Details for payments</small></h2>
+      <div class="budsum num" id="budSum"></div>
       <div class="list" id="catList"></div>
     </div>
     <div class="card">
@@ -628,6 +635,7 @@ try { CFG = JSON.parse(localStorage.getItem('cfg') || '{}') || {}; } catch (e) {
 })();
 const KEY = CFG.k || ''; const EXEC_URL = CFG.u || ''; const IS_WEB = true;
 const S = { cats: [], subs: [], by: '', data: null, range: 'month', month: startOfMonth(new Date()), cat: '', src: '', q: '', view: 'overview', openCats: {} };
+try { S.hero = localStorage.getItem('hero') || 'left'; } catch (e) { S.hero = 'left'; }
 
 // ---------- helpers ----------
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -943,17 +951,50 @@ function catPage(c) {
     <div class="amounthead">${icon(c, true)}<div class="a num rnd" style="font-size:32px">${m(tot)}</div>
       <div class="meta">${esc(periodText(true))}${bud ? ` · ${over ? '<b style="color:var(--crit)">' + m(tot - bud, false) + ' over</b>' : m(bud - tot, false) + ' left of ' + m(bud, false)}` : ' · no budget set'}</div></div>
     ${bud ? `<div style="margin:0 16px"><div class="bar"><i style="width:${pct}%;${over ? 'background:var(--crit)' : ''}"></i></div></div>` : ''}
-    <div class="kv" style="margin-top:12px"><div><small>Avg / month</small><b class="num">${m(avg, false)}</b></div><div><small>Regular</small><b class="num">${m(tot - one, false)}</b></div><div><small>One-off</small><b class="num">${m(one, false)}</b></div></div>
+    <div class="kv" style="margin-top:12px">${bud ? `<div><small>${over ? 'Over' : 'Left'}</small><b class="num" style="color:${over ? 'var(--crit)' : 'var(--good)'}">${m(Math.abs(bud - tot), false)}</b></div>` : ''}<div><small>Avg / month</small><b class="num">${m(avg, false)}</b></div><div><small>Regular</small><b class="num">${m(tot - one, false)}</b></div><div><small>One-off</small><b class="num">${m(one, false)}</b></div></div>
     <div class="ghead">Last 6 months</div><div class="chart" id="cpChart"></div>
-    ${subs.length ? `<div class="ghead">Subcategories</div><div class="form">${subs.map(([k, x]) => row(k, x.v, x.n, `data-cp-sub="${esc(c + SEP + k)}"`)).join('')}</div>` : ''}
+    ${subs.length ? `<div class="ghead">Subcategories <small style="text-transform:none;letter-spacing:0">· tap for its payments</small></div><div class="form">${subs.map(([k, x]) => `<div class="fr" data-subpage="${esc(c + SEP + k)}" style="cursor:pointer;display:block"><div style="display:flex;align-items:baseline;gap:8px"><span>${esc(k)}</span><small style="color:var(--text-3)">${x.n} pmt · ${Math.round(x.v / (tot || 1) * 100)}%</small><span class="num" style="margin-left:auto">${m(x.v, false)} ›</span></div><div class="mbar" style="margin-top:6px"><i style="width:${x.v / (subs[0][1].v || 1) * 100}%"></i></div></div>`).join('')}</div>` : ''}
     ${places.length ? `<div class="ghead">Where</div><div class="form">${places.map(([k, x]) => row(k, x.v, x.n)).join('')}</div>` : ''}
-    <div class="ghead">Payments</div><div class="group" style="margin:0 16px">${inP.sort((x, y) => y.ts - x.ts).slice(0, 15).map(t => txCell(t, true)).join('') || '<div class="empty">None in this period</div>'}</div>
+    <div class="ghead" style="display:flex;align-items:center">Payments · ${inP.length}<span style="margin-left:auto" class="seg2 small" id="cpSort"><button data-sort="date" aria-pressed="true">Newest</button><button data-sort="amt" aria-pressed="false">Biggest</button></span></div><div id="cpList">${payList(inP, 'date')}</div>
     <div style="padding:14px 16px 26px"><button class="mini primary" id="cpOnly" style="width:100%;padding:13px;font-size:16px">Show only ${esc(c)}</button></div>`);
   $('cpDone').onclick = closeSheet;
   $('cpOnly').onclick = () => { closeSheet(); S.cats = [c]; S.subs = []; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  $('sheetBody').onclick = (ev) => { const r = ev.target.closest('[data-cp-sub]'); if (r) { closeSheet(); S.cats = []; S.subs = [r.dataset.cpSub]; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } };
+  $('cpSort').onclick = (ev) => { const b2 = ev.target.closest('[data-sort]'); if (!b2) return; $('cpSort').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b2)); $('cpList').innerHTML = payList(inP, b2.dataset.sort); };
   bars('cpChart', six.map(x => { const v = all.filter(t => t.ts >= x.getTime() && t.ts < addMonths(x, 1).getTime()).reduce((s2, t) => s2 + t.amount, 0);
     return { label: MONTHS[x.getMonth()], values: [v], tip: `${MONTHS[x.getMonth()]}: ${m(v, false)}` }; }), [(LOOK[c] || [, 'var(--s1)'])[1]], { h: 150 });
+}
+// payments grouped by day (newest) or one list by size (biggest); every row opens the payment
+function payList(list, mode) {
+  if (!list.length) return '<div class="group" style="margin:0 16px"><div class="empty">None in this period</div></div>';
+  if (mode === 'amt') return `<div class="group" style="margin:0 16px">${list.slice().sort((x, y) => y.amount - x.amount).map(t => txCell(t, true)).join('')}</div>`;
+  const days = {};
+  list.slice().sort((x, y) => y.ts - x.ts).forEach(t => { const d = new Date(t.ts), k = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); (days[k] = days[k] || { d, l: [] }).l.push(t); });
+  return Object.values(days).map(({ d, l }) => `<div class="dayhead"><span>${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</span><span class="num">${m(l.reduce((s2, t) => s2 + t.amount, 0), false)}</span></div><div class="group" style="margin:0 16px 8px">${l.map(t => txCell(t)).join('')}</div>`).join('');
+}
+// one subcategory: this period, its trend, where, every payment
+function subPage(key) {
+  const [c, sub] = key.split(SEP);
+  const all = S.data.tx.filter(t => t.cat === c && (t.sub || 'General') === sub && t.type === 'expense');
+  const [a, b] = periodBounds(), inP = all.filter(t => t.ts >= a.getTime() && t.ts < b.getTime() && passFilters(t, true));
+  const tot = inP.reduce((s2, t) => s2 + t.amount, 0), catTot = S.data.tx.filter(t => t.cat === c && t.type === 'expense' && t.ts >= a.getTime() && t.ts < b.getTime()).reduce((s2, t) => s2 + t.amount, 0);
+  const now = startOfMonth(new Date()), six = []; for (let i = 5; i >= 0; i--) six.push(addMonths(now, -i));
+  const per = six.map(x => all.filter(t => t.ts >= x.getTime() && t.ts < addMonths(x, 1).getTime()).reduce((s2, t) => s2 + t.amount, 0));
+  const avg = per.slice(0, 5).reduce((s2, v) => s2 + v, 0) / 5;
+  const pl = {}; inP.forEach(t => { const k = t.where || t.what || '—'; (pl[k] = pl[k] || { v: 0, n: 0 }); pl[k].v += t.amount; pl[k].n++; });
+  const places = Object.entries(pl).sort((x, y) => y[1].v - x[1].v).slice(0, 6);
+  openSheet(`<div class="navbar"><button id="spBack">‹ Back</button><div class="nt">${esc(sub)}</div><button id="spDone">Done</button></div>
+    <div class="amounthead">${icon(c, true)}<div class="a num rnd" style="font-size:32px">${m(tot)}</div>
+      <div class="meta">${esc(periodText(true))} · ${catTot ? Math.round(tot / catTot * 100) + '% of ' + esc(c) : ''}</div></div>
+    <div class="kv"><div><small>Payments</small><b class="num">${inP.length}</b></div><div><small>Average payment</small><b class="num">${m(inP.length ? tot / inP.length : 0, false)}</b></div><div><small>Avg / month</small><b class="num">${m(avg, false)}</b></div></div>
+    <div class="ghead">Last 6 months</div><div class="chart" id="spChart"></div>
+    ${places.length ? `<div class="ghead">Where</div><div class="form">${places.map(([k, x]) => `<div class="fr"><span>${esc(k)}<small style="display:block;color:var(--text-3);font-size:12px">${x.n} payment${x.n === 1 ? '' : 's'}</small></span><span style="margin-left:auto" class="num">${m(x.v, false)}</span></div>`).join('')}</div>` : ''}
+    <div class="ghead" style="display:flex;align-items:center">Payments · ${inP.length}<span style="margin-left:auto" class="seg2 small" id="spSort"><button data-sort="date" aria-pressed="true">Newest</button><button data-sort="amt" aria-pressed="false">Biggest</button></span></div><div id="spList">${payList(inP, 'date')}</div>
+    <div style="padding:14px 16px 26px"><button class="mini primary" id="spOnly" style="width:100%;padding:13px;font-size:16px">Show only ${esc(sub)}</button></div>`);
+  $('spDone').onclick = closeSheet;
+  $('spBack').onclick = () => catPage(c);
+  $('spOnly').onclick = () => { closeSheet(); S.cats = []; S.subs = [key]; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  $('spSort').onclick = (ev) => { const b2 = ev.target.closest('[data-sort]'); if (!b2) return; $('spSort').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b2)); $('spList').innerHTML = payList(inP, b2.dataset.sort); };
+  bars('spChart', six.map((x, i) => ({ label: MONTHS[x.getMonth()], values: [per[i]], tip: `${MONTHS[x.getMonth()]}: ${m(per[i], false)}` })), [(LOOK[c] || [, 'var(--s1)'])[1]], { h: 140 });
 }
 function drillSheet(title, filter, subtitleOf) {
   const list = S.data.tx.filter(t => t.cur === 'AZN' && t.type === 'expense' && filter(t)).sort((a, b) => b.ts - a.ts);
@@ -1653,12 +1694,17 @@ function renderOverview(rows, spend) {
   const isCurrent = now >= a.getTime() && now < b.getTime();
   const frac = S.range === 'all' ? 1 : Math.min(1, elapsedDays / totalDays);
 
-  $('heroLabel').textContent = 'Spent' + (selOn() ? ' on ' + selLabel() : '');
-  $('heroSpent').textContent = m(total);
+  const showLeft = !!budget && S.hero !== 'spent';
+  const what = selOn() ? ' · ' + selLabel() : '';
+  $('heroLabel').textContent = showLeft ? (total <= budget ? 'Left to spend' : 'Over budget') + what : 'Spent' + what;
+  $('heroSpent').textContent = showLeft ? m(Math.abs(budget - total)) : m(total);
+  $('heroSpent').style.color = showLeft && total > budget ? 'var(--crit)' : '';
   const bar = $('heroBar'), fill = bar.querySelector('i'), pace = bar.querySelector('b');
   const st = $('heroStatus');
   if (budget) {
-    $('heroSub').textContent = 'of ' + m(budget, false) + ' budget';
+    const daysLeft = Math.max(1, Math.ceil((b - now) / 864e5));
+    $('heroSub').textContent = showLeft ? 'Spent ' + m(total, false) + ' of ' + m(budget, false) + (isCurrent && total < budget ? ' · ≈ ' + m((budget - total) / daysLeft, false) + ' a day for ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') : '')
+      : 'of ' + m(budget, false) + ' budget';
     bar.style.display = '';
     fill.style.width = Math.min(100, total / budget * 100) + '%';
     fill.style.background = total > budget ? 'var(--crit)' : 'var(--s1)';
@@ -1748,19 +1794,25 @@ function renderOverview(rows, spend) {
   const catRows = S.data.tx.filter(t => inPeriod(t) && passFilters(t, true) && isSpend(t));
   const byCat = {};
   catRows.forEach(t => { const c = byCat[t.cat] = byCat[t.cat] || { total: 0, n: 0, subs: {} }; c.total += t.amount; c.n++; c.subs[t.sub] = (c.subs[t.sub] || 0) + t.amount; });
-  const cats = Object.keys(byCat).sort((x, y) => byCat[y].total - byCat[x].total);
+  // every category that has a budget is listed, spent or not, so "left" is complete
+  if (!selOn() || S.cats.length) (S.data.budget || []).forEach(b => { if (b.amount > 0 && !notSpending(b.cat) && (!selOn() || selCatSet().has(b.cat)) && !byCat[b.cat]) byCat[b.cat] = { total: 0, n: 0, subs: {} }; });
+  const cats = Object.keys(byCat).sort((x, y) => (byCat[y].total - byCat[x].total) || ((budgetFor(y) || 0) - (budgetFor(x) || 0)));
+  { const bt = cats.reduce((s2, c) => s2 + (budgetFor(c) || 0), 0), st2 = cats.reduce((s2, c) => s2 + byCat[c].total, 0);
+    const inBud = cats.filter(c => budgetFor(c)).reduce((s2, c) => s2 + byCat[c].total, 0), noBud = st2 - inBud;
+    $('budSum').innerHTML = bt ? `<div><small>Budget</small><b>${m(bt, false)}</b></div><div><small>Spent</small><b>${m(inBud, false)}</b></div><div><small>${inBud > bt ? 'Over' : 'Left'}</small><b style="color:${inBud > bt ? 'var(--crit)' : 'var(--good)'}">${m(Math.abs(bt - inBud), false)}</b></div>${noBud > 0 ? `<div><small>No budget</small><b>${m(noBud, false)}</b></div>` : ''}` : '';
+    $('budSum').hidden = !bt; }
   $('catList').innerHTML = cats.length ? cats.map(c => {
     const v = byCat[c].total, bud = budgetFor(c);
     const over = bud && v > bud, near = bud && !over && v > bud * 0.8;
     const scale = bud ? Math.max(bud, v) : Math.max(1, byCat[cats[0]].total);
-    const subs = Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).map(([s, a2]) => `<div class="srow"><a href="#" data-filter-sub="${esc(c + SEP + (s || 'General'))}" style="color:var(--text-2)">${esc(s)} ›</a><span class="num">${m(a2)}</span></div>`).join('');
+    const subs = Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).map(([s, a2]) => `<div class="srow"><a href="#" data-subpage="${esc(c + SEP + (s || 'General'))}" style="color:var(--text-2)">${esc(s || 'General')} ›</a><span class="num">${m(a2)}</span></div>`).join('') || '<div class="srow" style="color:var(--text-3)">Nothing spent yet</div>';
     const flags = kindOf(c) === 'Fixed' ? '<em class="flag fixed">Fixed</em>' : '';
     return `<div class="cell crow ${S.openCats[c] ? 'open' : ''}" data-cat="${esc(c)}" ${selOn() && !selCatSet().has(c) ? 'style="opacity:.4"' : ''}>
       ${icon(c)}
       <div class="mid"><div class="t1"><span>${esc(c)}</span>${flags}</div>
         <div class="mbar"><i class="${over ? 'over' : near ? 'near' : ''}" style="width:${Math.min(100, v / scale * 100)}%"></i>${bud && !over ? `<b style="left:${Math.min(100, bud / scale * 100)}%"></b>` : ''}</div>
-        <div class="t3 num">${Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([s2, a2]) => esc(s2) + ' ' + m(a2, false)).join(' · ')}</div></div>
-      <div class="end num" ${over ? 'style="color:var(--crit)"' : ''}>${m(v, false)}<small class="dim">${over ? m(v - bud, false) + ' over' : bud ? 'of ' + m(bud, false) : byCat[c].n + ' payment' + (byCat[c].n === 1 ? '' : 's')}</small></div>
+        <div class="t3 num">${Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([s2, a2]) => esc(s2 || 'General') + ' ' + m(a2, false)).join(' · ') || (bud ? 'nothing spent yet' : '')}</div></div>
+      <div class="end num">${bud ? `<span style="color:${over ? 'var(--crit)' : near ? 'var(--warn)' : 'var(--good)'}">${m(Math.abs(bud - v), false)} ${over ? 'over' : 'left'}</span><small class="dim">${m(v, false)} of ${m(bud, false)}</small>` : `${m(v, false)}<small class="dim">no budget · ${byCat[c].n} pmt</small>`}</div>
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
     </div><div class="subs">${subs}<div class="srow" style="justify-content:space-between;padding-top:6px"><a href="#" data-drill-cat="${esc(c)}">Details</a><a href="#" data-filter="${esc(c)}">Show only ${esc(c)}</a></div></div>`;
   }).join('') : '<div class="empty">No spending in this period</div>';
@@ -2182,6 +2234,9 @@ document.addEventListener('click', async (e) => {
   if (eg) { openGoal((S.data.goals || []).find(g => g.name === eg.dataset.editGoal)); return; }
   const ea = e.target.closest('[data-edit-acc]');
   if (ea) { openAccount((S.data.accounts || []).find(x => x.name === ea.dataset.editAcc)); return; }
+  const sp = e.target.closest('[data-subpage]');
+  if (sp) { e.preventDefault(); subPage(sp.dataset.subpage); return; }
+  if (e.target.closest('#heroCard') && S.data) { S.hero = S.hero === 'spent' ? 'left' : 'spent'; try { localStorage.setItem('hero', S.hero); } catch (x) {} render(); return; }
   const dc = e.target.closest('[data-drill-cat]');
   if (dc) { e.preventDefault(); catPage(dc.dataset.drillCat); return; }
   const ds = e.target.closest('[data-drill-shop]');
