@@ -742,7 +742,7 @@ function ago(t) { const mins = Math.round((Date.now() - t) / 6e4); return mins <
 function setSync(state) { const b = $('reload'); b.classList.toggle('syncing', state === 'syncing'); b.classList.toggle('stale', state === 'stale'); }
 const fp = (t) => ({ ts: t.ts, amount: t.amount, where: t.where, what: t.what });
 const kindOf = (c) => ((S.data && S.data.budget.find(b => b.cat === c)) || {}).type || 'Flexible';
-const notSpending = (c) => ['Saving', 'Repayment', 'Reimbursable'].includes(kindOf(c));
+const notSpending = (c) => ['Saving', 'Repayment', 'Reimbursable', 'Transfer'].includes(kindOf(c));
 const isReimb = (t) => kindOf(t.cat) === 'Reimbursable';
 // Income = money in, except someone paying you back for what you paid for them.
 const isIncome = (t) => t.type === 'income' && !isReimb(t);
@@ -780,6 +780,8 @@ const LOOK = {
   'Electronics & gadgets': ['💻', '#8e8e93'], 'Home': ['🏠', '#ff9500'], 'Entertainment': ['🎬', '#af52de'],
   'Travel': ['✈️', '#32ade6'], 'Education': ['📚', '#007aff'], 'Gifts & charity': ['🎁', '#ff3b30'],
   'Government & fees': ['🏛️', '#8e8e93'], 'Transfers': ['↔️', '#8e8e93'], 'Other': ['📦', '#8e8e93'],
+  'Eating out': ['🍽️', '#ff9500'], 'Housing & bills': ['💡', '#f2c94c'], 'Personal care': ['💇', '#ff2d55'], 'Electronics': ['💻', '#8e8e93'],
+  'Fees & taxes': ['🏛️', '#8e8e93'], 'Family transfers': ['↔️', '#8e8e93'],
   'Uncategorized': ['❓', '#ff9500'], 'Savings & investing': ['📈', '#34c759'], 'Debt repayment': ['💳', '#007aff'],
   'Income': ['💰', '#34c759'], 'Paid for others': ['🤝', '#5ac8fa'], 'Cash': ['💵', '#34c759'], 'Own transfer': ['🔄', '#8e8e93'],
 };
@@ -871,6 +873,19 @@ function smartQ() {
 function inPeriod(t) {
   if (S.q) { const q = smartQ(); if (q.from) return t.ts >= q.from.getTime() && t.ts < q.to.getTime(); }
   const [a, b] = periodBounds(); return t.ts >= a.getTime() && t.ts < b.getTime();
+}
+// a subcategory's own limit (Sub budgets tab), scaled to the period like category budgets; null when it has none
+function subBudgetFor(cat, sub) {
+  const b = (S.data.subBudget || []).find(x => x.cat === cat && x.sub === (sub || 'General'));
+  if (!b) return null;
+  const months = S.range === 'month' ? 1 : S.range === '3m' ? 3 : S.range === 'year' ? (new Date().getMonth() + 1) : S.range === 'week' ? 7 / 30.4 : null;
+  return months === null ? null : b.amount * months;
+}
+// "₼40 left" / "₼12 over" coloured, for any amount against a limit
+function leftTag(spent, limit) {
+  if (!limit) return '';
+  const over = spent > limit, near = !over && spent > limit * 0.85;
+  return `<span class="num" style="color:${over ? 'var(--crit)' : near ? 'var(--warn)' : 'var(--good)'}">${m(Math.abs(limit - spent), false)} ${over ? 'over' : 'left'}</span>`;
 }
 function budgetFor(cat) {
   const months = S.range === 'month' ? 1 : S.range === '3m' ? 3 : S.range === 'year' ? (new Date().getMonth() + 1) : S.range === 'week' ? 7 / 30.4 : null;
@@ -970,7 +985,7 @@ function catPage(c) {
     ${bud ? `<div style="margin:0 16px"><div class="bar"><i style="width:${pct}%;${over ? 'background:var(--crit)' : ''}"></i></div></div>` : ''}
     <div class="kv" style="margin-top:12px">${bud ? `<div><small>${over ? 'Over' : 'Left'}</small><b class="num" style="color:${over ? 'var(--crit)' : 'var(--good)'}">${m(Math.abs(bud - tot), false)}</b></div>` : ''}<div><small>Avg / month</small><b class="num">${m(avg, false)}</b></div><div><small>Regular</small><b class="num">${m(tot - one, false)}</b></div><div><small>One-off</small><b class="num">${m(one, false)}</b></div></div>
     <div class="ghead">Last 6 months</div><div class="chart" id="cpChart"></div>
-    ${subs.length ? `<div class="ghead">Subcategories <small style="text-transform:none;letter-spacing:0">· tap for its payments</small></div><div class="form">${subs.map(([k, x]) => `<div class="fr" data-subpage="${esc(c + SEP + k)}" style="cursor:pointer;display:block"><div style="display:flex;align-items:baseline;gap:8px"><span>${esc(k)}</span><small style="color:var(--text-3)">${x.n} pmt · ${Math.round(x.v / (tot || 1) * 100)}%</small><span class="num" style="margin-left:auto">${m(x.v, false)} ›</span></div><div class="mbar" style="margin-top:6px"><i style="width:${x.v / (subs[0][1].v || 1) * 100}%"></i></div></div>`).join('')}</div>` : ''}
+    ${subs.length ? `<div class="ghead">Subcategories <small style="text-transform:none;letter-spacing:0">· tap for its payments</small></div><div class="form">${subs.map(([k, x]) => `<div class="fr" data-subpage="${esc(c + SEP + k)}" style="cursor:pointer;display:block"><div style="display:flex;align-items:baseline;gap:8px"><span>${esc(k)}</span><small style="color:var(--text-3)">${x.n} pmt · ${Math.round(x.v / (tot || 1) * 100)}%</small><span class="num" style="margin-left:auto">${m(x.v, false)} ›</span></div>${subBudgetFor(c, k) ? `<div class="mbar" style="margin-top:6px"><i style="width:${Math.min(100, x.v / subBudgetFor(c, k) * 100)}%;${x.v > subBudgetFor(c, k) ? 'background:var(--crit)' : ''}"></i></div><small style="display:block;margin-top:3px;font-size:12px">${leftTag(x.v, subBudgetFor(c, k))} <span style="color:var(--text-3)">of ${m(subBudgetFor(c, k), false)}</span></small>` : `<div class="mbar" style="margin-top:6px"><i style="width:${x.v / (subs[0][1].v || 1) * 100}%"></i></div>`}</div>`).join('')}</div>` : ''}
     ${places.length ? `<div class="ghead">Where</div><div class="form">${places.map(([k, x]) => row(k, x.v, x.n)).join('')}</div>` : ''}
     <div class="ghead" style="display:flex;align-items:center">Payments · ${inP.length}<span style="margin-left:auto" class="seg2 small" id="cpSort"><button data-sort="date" aria-pressed="true">Newest</button><button data-sort="amt" aria-pressed="false">Biggest</button></span></div><div id="cpList">${payList(inP, 'date')}</div>
     <div style="padding:14px 16px 26px"><button class="mini primary" id="cpOnly" style="width:100%;padding:13px;font-size:16px">Show only ${esc(c)}</button></div>`);
@@ -1001,7 +1016,7 @@ function subPage(key) {
   const places = Object.entries(pl).sort((x, y) => y[1].v - x[1].v).slice(0, 6);
   openSheet(`<div class="navbar"><button id="spBack">‹ Back</button><div class="nt">${esc(sub)}</div><button id="spDone">Done</button></div>
     <div class="amounthead">${icon(c, true)}<div class="a num rnd" style="font-size:32px">${m(tot)}</div>
-      <div class="meta">${esc(periodText(true))} · ${catTot ? Math.round(tot / catTot * 100) + '% of ' + esc(c) : ''}</div></div>
+      <div class="meta">${esc(periodText(true))} · ${catTot ? Math.round(tot / catTot * 100) + '% of ' + esc(c) : ''}${subBudgetFor(c, sub) ? '<br>' + leftTag(tot, subBudgetFor(c, sub)) + ' of ' + m(subBudgetFor(c, sub), false) : ''}</div></div>
     <div class="kv"><div><small>Payments</small><b class="num">${inP.length}</b></div><div><small>Average payment</small><b class="num">${m(inP.length ? tot / inP.length : 0, false)}</b></div><div><small>Avg / month</small><b class="num">${m(avg, false)}</b></div></div>
     <div class="ghead">Last 6 months</div><div class="chart" id="spChart"></div>
     ${places.length ? `<div class="ghead">Where</div><div class="form">${places.map(([k, x]) => `<div class="fr"><span>${esc(k)}<small style="display:block;color:var(--text-3);font-size:12px">${x.n} payment${x.n === 1 ? '' : 's'}</small></span><span style="margin-left:auto" class="num">${m(x.v, false)}</span></div>`).join('')}</div>` : ''}
@@ -1607,10 +1622,11 @@ async function reviewAction(e) {
 
 // ---------- budgets ----------
 function openBudgets() {
-  const TYPES = ['Fixed', 'Flexible', 'Saving', 'Repayment', 'Reimbursable'];
-  const LABEL = { Fixed: 'Fixed', Flexible: 'Flexible', Saving: 'Saving', Repayment: 'Repaying', Reimbursable: 'For others' };
+  const TYPES = ['Fixed', 'Flexible', 'Saving', 'Repayment', 'Reimbursable', 'Transfer'];
+  const LABEL = { Fixed: 'Fixed', Flexible: 'Flexible', Saving: 'Saving', Repayment: 'Repaying', Reimbursable: 'For others', Transfer: 'Family move' };
   const rows = S.data.budget.filter(b => b.cat !== 'Uncategorized');
-  const row = (b, i) => `<label class="fr bud"><span>${esc(b.cat)}</span>
+  const nSub = (c) => (S.data.subBudget || []).filter(x => x.cat === c).length;
+  const row = (b, i) => `<label class="fr bud"><span>${esc(b.cat)}${['Fixed', 'Flexible'].includes(b.type) ? `<a href="#" data-subbud="${esc(b.cat)}" style="display:block;font-size:12px;color:var(--accent);text-decoration:none;margin-top:2px">${nSub(b.cat) ? nSub(b.cat) + ' subcategory budget' + (nSub(b.cat) > 1 ? 's' : '') : 'Subcategory budgets'} ›</a>` : ''}</span>
       <select data-bt="${i}">${TYPES.map(x => `<option value="${x}" ${x === b.type ? 'selected' : ''}>${LABEL[x]}</option>`).join('')}</select>
       <input data-ba="${i}" type="number" inputmode="decimal" step="1" min="0" value="${Math.round(b.amount * 100) / 100}" placeholder="0"></label>`;
   const groups = [['Fixed', 'Fixed bills'], ['Flexible', 'Flexible'], ['other', 'Not spending']];
@@ -1630,6 +1646,7 @@ function openBudgets() {
     $('bTotal').textContent = m(s2, false);
   };
   $('sheetBody').oninput = total; total();
+  $('sheetBody').onclick = (ev) => { const a = ev.target.closest('[data-subbud]'); if (a) { ev.preventDefault(); openSubBudgets(a.dataset.subbud); } };
   $('bCancel').onclick = closeSheet;
   $('bSave').onclick = async () => {
     const list = rows.map((b, i) => ({ cat: b.cat, type: document.querySelector(`[data-bt="${i}"]`).value, amount: Number(document.querySelector(`[data-ba="${i}"]`).value) || 0 }))
@@ -1640,6 +1657,36 @@ function openBudgets() {
     $('bSave').disabled = true;
     try { S.data.budget = await call('apiSaveBudget', list); closeSheet(); render(); toast('Budgets saved'); }
     catch (e) { toast(e); $('bSave').disabled = false; }
+  };
+}
+
+// limits for the subcategories of one category (optional; the category budget stays the total)
+function openSubBudgets(cat) {
+  const catBud = (S.data.budget.find(b => b.cat === cat) || {}).amount || 0;
+  const cur = {}; (S.data.subBudget || []).filter(x => x.cat === cat).forEach(x => cur[x.sub] = x.amount);
+  const used = {}; S.data.tx.filter(t => t.cat === cat && t.type === 'expense').forEach(t => used[t.sub || 'General'] = 1);
+  const names = [...new Set(((S.data.subs || {})[cat] || []).concat(Object.keys(used), Object.keys(cur)))].filter(Boolean).sort((a, b) => (cur[b] || 0) - (cur[a] || 0) || a.localeCompare(b));
+  // what each subcategory took last month, as a hint for the limit
+  const lm = addMonths(startOfMonth(new Date()), -1), last = {};
+  S.data.tx.filter(t => t.cat === cat && t.type === 'expense' && t.ts >= lm.getTime() && t.ts < startOfMonth(new Date()).getTime()).forEach(t => last[t.sub || 'General'] = (last[t.sub || 'General'] || 0) + t.amount);
+  openSheet(`<div class="navbar"><button id="sbBack">‹ Budgets</button><div class="nt">${esc(cat)}</div><button id="sbSave">Save</button></div>
+    <div class="amounthead"><div class="a num rnd" id="sbTotal">—</div><div class="sumline" id="sbLine"></div></div>
+    <div class="ghead">Monthly limit per subcategory</div>
+    <div class="form">${names.map((n, i) => `<label class="fr bud"><span>${esc(n)}<small style="display:block;color:var(--text-3);font-size:12px">${last[n] ? 'last month ' + m(last[n], false) : 'no spending last month'}</small></span><input data-sb="${i}" type="number" inputmode="decimal" min="0" step="1" value="${cur[n] || ''}" placeholder="none"></label>`).join('')}
+      <label class="fr bud"><input id="sbNew" placeholder="New subcategory" style="flex:1;width:auto;text-align:left"><input id="sbNewAmt" type="number" inputmode="decimal" placeholder="₼"></label></div>
+    <div class="gfoot">Empty = no limit. These sit inside the ${esc(cat)} budget, which stays the total that counts.</div>`);
+  const total = () => { let t = Number($('sbNewAmt').value) || 0; names.forEach((n, i) => t += Number(document.querySelector(`[data-sb="${i}"]`).value) || 0);
+    $('sbTotal').textContent = m(t, false);
+    $('sbLine').innerHTML = catBud ? (t > catBud ? `<span style="color:var(--crit)">${m(t - catBud, false)} more than the ${esc(cat)} budget of ${m(catBud, false)}</span>` : `of ${m(catBud, false)} ${esc(cat)} budget · ${m(catBud - t, false)} not assigned`) : 'this category has no budget yet'; };
+  $('sheetBody').oninput = total; total();
+  $('sbBack').onclick = openBudgets;
+  $('sbSave').onclick = async () => {
+    const list = names.map((n, i) => ({ cat, sub: n, amount: Number(document.querySelector(`[data-sb="${i}"]`).value) || 0 })).filter(x => (cur[x.sub] || 0) !== x.amount);
+    const nn = $('sbNew').value.trim(); if (nn && Number($('sbNewAmt').value) > 0) list.push({ cat, sub: nn, amount: Number($('sbNewAmt').value) });
+    if (!list.length) { openBudgets(); return; }
+    $('sbSave').disabled = true;
+    try { S.data.subBudget = await call('apiSaveSubBudgets', list); render(); toast('Subcategory budgets saved'); openBudgets(); }
+    catch (e) { toast(e); $('sbSave').disabled = false; }
   };
 }
 
@@ -1681,7 +1728,7 @@ function renderDonut(spend) {
   $('dnCenter').innerHTML = `<small>${lvl ? esc(lvl === '__other' ? 'Other categories' : lvl) : 'Spent'}</small><b class="num">${m(tot, false)}</b>${bud ? `<small style="color:${over ? 'var(--crit)' : 'var(--good)'}">${m(Math.abs(bud - tot), false)} ${over ? 'over' : 'left'}</small>` : `<small>${periodText(true)}</small>`}`;
   $('dnTitle').innerHTML = lvl ? `${esc(lvl === '__other' ? 'Other categories' : lvl)} <small>${lvl === '__other' ? 'tap a category' : 'tap a subcategory for its payments'}</small>` : 'Where it went <small>tap a slice</small>';
   $('dnLegend').innerHTML = (lvl ? `<a href="#" class="dnback" data-dn-back>‹ All categories</a>` : '') +
-    rows.map((r, i) => `<div class="dnrow" data-dn="${i}"><i style="background:${col(i)}"></i><span class="nm">${esc(r.label)}</span><span class="pc num">${Math.round(r.v / tot * 100)}%</span><span class="am num">${m(r.v, false)}</span><svg class="chev" viewBox="0 0 24 24" width="14" height="14"><path d="M9 5l7 7-7 7"/></svg></div>`).join('') +
+    rows.map((r, i) => `<div class="dnrow" data-dn="${i}"><i style="background:${col(i)}"></i><span class="nm">${esc(r.label)}</span><span class="pc num">${Math.round(r.v / tot * 100)}%</span><span class="am num">${m(r.v, false)}${r.sub && subBudgetFor(lvl, r.key) ? '<small style="display:block;font-size:11px">' + leftTag(r.v, subBudgetFor(lvl, r.key)) + '</small>' : ''}</span><svg class="chev" viewBox="0 0 24 24" width="14" height="14"><path d="M9 5l7 7-7 7"/></svg></div>`).join('') +
     (lvl && lvl !== '__other' ? `<div style="padding:10px 2px 0"><a href="#" data-drill-cat="${esc(lvl)}" style="color:var(--accent);text-decoration:none;font-weight:600">All ${esc(lvl)} details and payments ›</a></div>` : '');
   S._dnRows = rows;
 }
@@ -1825,7 +1872,7 @@ function renderOverview(rows, spend) {
 
   // fixed / flexible / saved / repaid (ignores the category filter)
   const out = S.data.tx.filter(t => inPeriod(t) && passFilters(t, true) && t.type === 'expense');
-  const byKind = { Fixed: 0, Flexible: 0, Saving: 0, Repayment: 0, Reimbursable: 0 };
+  const byKind = { Fixed: 0, Flexible: 0, Saving: 0, Repayment: 0, Reimbursable: 0, Transfer: 0 };
   out.forEach(t => { const k = kindOf(t.cat); byKind[k in byKind ? k : 'Flexible'] += t.amount; });
   $('sFixed').textContent = m(byKind.Fixed, false); $('sFlex').textContent = m(byKind.Flexible, false);
   $('sSaved').textContent = m(byKind.Saving, false); $('sRepaid').textContent = m(byKind.Repayment, false);
@@ -1871,7 +1918,8 @@ function renderOverview(rows, spend) {
     const v = byCat[c].total, bud = budgetFor(c);
     const over = bud && v > bud, near = bud && !over && v > bud * 0.8;
     const scale = bud ? Math.max(bud, v) : Math.max(1, byCat[cats[0]].total);
-    const subs = Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).map(([s, a2]) => `<div class="srow"><a href="#" data-subpage="${esc(c + SEP + (s || 'General'))}" style="color:var(--text-2)">${esc(s || 'General')} ›</a><span class="num">${m(a2)}</span></div>`).join('') || '<div class="srow" style="color:var(--text-3)">Nothing spent yet</div>';
+    const subs = Object.entries(byCat[c].subs).sort((x, y) => y[1] - x[1]).map(([s, a2]) => { const sb = subBudgetFor(c, s || 'General');
+      return `<div class="srow"><a href="#" data-subpage="${esc(c + SEP + (s || 'General'))}" style="color:var(--text-2)">${esc(s || 'General')} ›</a><span class="num">${m(a2)}${sb ? ' · ' + leftTag(a2, sb) : ''}</span></div>`; }).join('') || '<div class="srow" style="color:var(--text-3)">Nothing spent yet</div>';
     const flags = kindOf(c) === 'Fixed' ? '<em class="flag fixed">Fixed</em>' : '';
     return `<div class="cell crow ${S.openCats[c] ? 'open' : ''}" data-cat="${esc(c)}" ${selOn() && !selCatSet().has(c) ? 'style="opacity:.4"' : ''}>
       ${icon(c)}
